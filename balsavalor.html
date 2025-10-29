@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Simulador de Mercados y Tipos de Cambio</title>
+<style>
+  :root{--bg:#071028;--card:#0b1220;--accent:#06b6d4;--gain:#16a34a;--loss:#ef4444;--muted:#94a3b8}
+  *{box-sizing:border-box;font-family:Inter,system-ui,Arial;margin:0}
+  body{background:linear-gradient(180deg,#021025,#061231);color:#e6eef8;min-height:100vh;padding:18px}
+  .wrap{max-width:1200px;margin:0 auto;display:grid;grid-template-columns:350px 1fr;gap:16px}
+  .card{background:linear-gradient(180deg,rgba(255,255,255,0.02),rgba(255,255,255,0.01));padding:14px;border-radius:10px;border:1px solid rgba(255,255,255,0.03)}
+  h2{font-size:16px;margin-bottom:8px}
+  .market-list{display:flex;flex-direction:column;gap:8px;max-height:70vh;overflow:auto}
+  .asset{display:flex;justify-content:space-between;align-items:center;padding:8px;border-radius:8px;background:rgba(0,0,0,0.12);cursor:pointer}
+  .asset.selected{outline:2px solid rgba(6,182,212,0.15)}
+  .ticker{font-weight:700}
+  .small{font-size:13px;color:var(--muted)}
+  #chart{width:100%;height:400px;background:#021425;border-radius:8px;margin-top:8px}
+  button{background:var(--accent);border:none;padding:8px 10px;border-radius:8px;color:#021025;font-weight:700;cursor:pointer}
+  .secondary{background:transparent;border:1px solid rgba(255,255,255,0.05);color:var(--muted)}
+  footer{text-align:center;margin-top:12px;color:var(--muted);font-size:13px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- PANEL DE MERCADOS -->
+  <div class="card">
+    <h2>🌎 Tipos de Cambio</h2>
+    <div class="small">Monedas simuladas en tiempo dinámico</div>
+    <div style="margin-top:10px;display:flex;gap:8px">
+      <button id="step" class="secondary">Actualizar tipo de cambio</button>
+      <button id="autoPlay" class="secondary">Auto ▶</button>
+    </div>
+    <div class="market-list" id="marketList"></div>
+  </div>
+
+  <!-- PANEL DE GRÁFICA -->
+  <div class="card">
+    <h2 id="chartTitle">Selecciona un mercado</h2>
+    <canvas id="chart"></canvas>
+  </div>
+
+</div>
+
+<footer>Simulación de mercados educativos — No usar para inversión real.</footer>
+
+<script>
+const markets = [
+  {ticker:'USD/MXN', rate:18.50, vol:0.003},
+  {ticker:'EUR/USD', rate:1.08, vol:0.002},
+  {ticker:'GBP/USD', rate:1.25, vol:0.0025},
+  {ticker:'JPY/USD', rate:0.0067, vol:0.0015},
+  {ticker:'CAD/USD', rate:0.73, vol:0.002},
+  {ticker:'BRL/USD', rate:0.19, vol:0.003},
+  {ticker:'CNY/USD', rate:0.14, vol:0.001},
+  {ticker:'CHF/USD', rate:1.12, vol:0.002},
+  {ticker:'KRW/USD', rate:0.00073, vol:0.001},
+  {ticker:'BTC/USD', rate:65000, vol:0.03}
+];
+
+let state = JSON.parse(localStorage.getItem('fxSim')||'null') || {
+  markets: JSON.parse(JSON.stringify(markets)),
+  history:{},
+  selected:null
+};
+
+// Historial
+markets.forEach(m=>{
+  if(!state.history[m.ticker]) state.history[m.ticker]=[m.rate];
+});
+
+const listEl = document.getElementById('marketList');
+const chart = document.getElementById('chart');
+const ctx = chart.getContext('2d');
+const titleEl = document.getElementById('chartTitle');
+let interval=null;
+
+// --- Render lista ---
+function renderList(){
+  listEl.innerHTML='';
+  state.markets.forEach(m=>{
+    const div=document.createElement('div');
+    div.className='asset'+(state.selected===m.ticker?' selected':'');
+    const hist=state.history[m.ticker];
+    const last=hist[hist.length-1];
+    const prev=hist[hist.length-2]||last;
+    const change=((last-prev)/prev)*100;
+    div.innerHTML=`<div><div class="ticker">${m.ticker}</div><div class="small">Cambio: <span style="color:${change>=0?'var(--gain)':'var(--loss)'}">${change>=0?'+':''}${change.toFixed(2)}%</span></div></div>
+      <div><strong>${m.rate.toFixed(4)}</strong></div>`;
+    div.onclick=()=>{state.selected=m.ticker;save();renderAll();};
+    listEl.appendChild(div);
+  });
+}
+
+// --- Actualizar precios ---
+function stepRates(){
+  state.markets.forEach(m=>{
+    const sigma=m.vol;
+    const drift=0.0002;
+    const rand=normalRandom();
+    const change=Math.exp((drift-0.5*sigma*sigma)+sigma*rand);
+    m.rate=Math.max(0.00001,m.rate*change);
+    if(!state.history[m.ticker]) state.history[m.ticker]=[];
+    state.history[m.ticker].push(m.rate);
+  });
+  save();
+}
+
+// --- Función normal aleatoria ---
+function normalRandom(){
+  let u=0,v=0;while(u===0)u=Math.random();while(v===0)v=Math.random();
+  return Math.sqrt(-2.0*Math.log(u))*Math.cos(2*Math.PI*v);
+}
+
+// --- Dibuja gráfica ---
+function drawChart(){
+  chart.width=chart.clientWidth*devicePixelRatio;
+  chart.height=chart.clientHeight*devicePixelRatio;
+  ctx.scale(devicePixelRatio,devicePixelRatio);
+  ctx.clearRect(0,0,chart.clientWidth,chart.clientHeight);
+
+  if(!state.selected){ctx.fillStyle='#888';ctx.fillText('Selecciona un mercado...',20,30);return;}
+  const h=state.history[state.selected];
+  const max=Math.max(...h),min=Math.min(...h);
+  const w=chart.clientWidth,hh=chart.clientHeight;
+  ctx.beginPath();
+  h.forEach((v,i)=>{
+    const x=(i/(h.length-1))*(w-20)+10;
+    const y=10+(1-(v-min)/(max-min||1))*(hh-20);
+    if(i===0)ctx.moveTo(x,y);else ctx.lineTo(x,y);
+  });
+  const last=h[h.length-1],prev=h[h.length-2]||last;
+  ctx.strokeStyle=last>=prev?'var(--gain)':'var(--loss)';
+  ctx.lineWidth=2;ctx.stroke();
+  ctx.fillStyle='#fff';
+  ctx.fillText('${state.selected}: ${last.toFixed(4)}',10,20);
+}
+
+// --- Guardar ---
+function save(){
+  localStorage.setItem('fxSim',JSON.stringify(state));
+}
+
+// --- Render general ---
+function renderAll(){
+  renderList();
+  drawChart();
+  if(state.selected) titleEl.textContent='Gráfica '+state.selected;
+}
+
+// --- Botones ---
+document.getElementById('step').onclick=()=>{stepRates();renderAll();};
+document.getElementById('autoPlay').onclick=()=>{
+  const btn=document.getElementById('autoPlay');
+  if(interval){clearInterval(interval);interval=null;btn.textContent='Auto ▶';}
+  else{interval=setInterval(()=>{stepRates();renderAll();},1000);btn.textContent='Parar ⏸';}
+};
+
+// Init
+renderAll();
+window.addEventListener('resize',drawChart);
+</script>
+</body>
+</html>
